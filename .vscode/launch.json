@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lye_homerow}",
+            "name": "Debug lye_homerow",
+            "target": "lye_homerow",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug lye_homerow"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lye_homerow}",
+            "name": "Release lye_homerow",
+            "target": "lye_homerow",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release lye_homerow"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lye_homerow}",
+            "name": "Debug FlashClick",
+            "target": "FlashClick",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug FlashClick"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lye_homerow}",
+            "name": "Release FlashClick",
+            "target": "FlashClick",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release FlashClick"
+        }
+    ]
+}

@@ -1,0 +1,6 @@
+{
+"[swift]": {
+    "editor.defaultFormatter": "nicklockwood.swiftformat",
+    "editor.formatOnSave": true
+}
+}
