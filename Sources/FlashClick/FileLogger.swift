@@ -34,7 +34,7 @@ class FileLogger {
         let logMessage = "[\(timestamp)] \(message)\n"
 
         // 1. 控制台打印
-        //print(logMessage, terminator: "")
+        print(logMessage, terminator: "")
 
         // 2. 文件写入
         guard let data = logMessage.data(using: .utf8) else { return }

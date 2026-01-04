@@ -32,20 +32,25 @@ class UIScanner {
 
         if let window = targetWindow {
             // 获取窗口范围 (用于裁剪)
-            var winPos: CGPoint = .zero
-            var winSize: CGSize = .zero
+            var windowRect: CGRect = .zero
 
-            if let posVal = AXHelpers.getAttribute(
+            // 获取窗口位置
+            if let posVal: CFTypeRef = AXHelpers.getAttribute(
                 element: window, attribute: kAXPositionAttribute as String)
             {
+                var winPos: CGPoint = .zero
                 AXValueGetValue(posVal as! AXValue, .cgPoint, &winPos)
+                windowRect.origin = winPos
             }
+
+            // 获取窗口大小
             if let sizeVal = AXHelpers.getAttribute(
                 element: window, attribute: kAXSizeAttribute as String)
             {
+                var winSize: CGSize = .zero
                 AXValueGetValue(sizeVal as! AXValue, .cgSize, &winSize)
+                windowRect.size = winSize
             }
-            let windowRect = CGRect(origin: winPos, size: winSize)
 
             // --- 阶段 1: 遍历 (Traversal) ---
             let t1: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
@@ -124,47 +129,41 @@ class UIScanner {
             return
         }
 
-        // --- 3. 目标角色筛选 ---
-        let targetRoles = [
+        // --- 3. 目标角色筛选和验证 ---
+        // 所有需要处理的角色
+        let allRoles = [
             "AXButton", "AXLink", "AXTextField", "AXTextArea", "AXCheckBox",
             "AXPopUpButton", "AXComboBox", "AXRadioButton", "AXTabButton",
             "AXMenuButton", "AXMenuItem", "AXGroup", "AXImage", "AXRow",
             "AXStaticText",  // VS Code 有些按钮其实是可点击的文本
         ]
 
-        if targetRoles.contains(role) {
+        // 信任的角色（无需额外检查action）
+        let trustedRoles = Set([
+            "AXButton", "AXLink", "AXTextField", "AXTextArea",
+            "AXCheckBox", "AXRadioButton", "AXMenuItem",
+            "AXTabButton", "AXMenuButton", "AXPopUpButton", "AXComboBox",
+        ])
 
-            // --- 4. 按需检查 Action (核心修改) ---
-
-            // 【修改点 1】扩大信任名单
-            // VS Code 的侧边栏图标通常是 AXRadioButton
-            // 编辑器 Tab 是 AXTabButton
-            // 菜单项是 AXMenuItem
-            let trustedRoles = [
-                "AXButton", "AXLink", "AXTextField", "AXTextArea",
-                "AXCheckBox", "AXRadioButton", "AXMenuItem",
-                "AXTabButton", "AXMenuButton", "AXPopUpButton", "AXComboBox",
-            ]
-            let isTrusted: Bool = trustedRoles.contains(role)
-
+        if allRoles.contains(role) {
+            // --- 4. 按需检查 Action ---
             var isValid = false
 
-            if isTrusted {
+            if trustedRoles.contains(role) {
                 isValid = true
             } else {
-                // 【修改点 2】对于不信任的角色 (Group, Image, StaticText)，必须查 Action
+                // 对于不信任的角色 (Group, Image, StaticText)，必须查 Action
                 var actionNames: CFArray?
                 let err: AXError = AXUIElementCopyActionNames(element, &actionNames)
-                if err == .success, let names = actionNames as? [String], names.count > 0 {
+                if err == .success, let names: [String] = actionNames as? [String], names.count > 0
+                {
                     isValid = true
                 }
             }
 
             if isValid {
-                // ... (尺寸检查代码不变) ...
-                if elementFrame.width > 5 && elementFrame.height > 5 && elementFrame.width < 2000
-                    && elementFrame.height < 2000
-                {
+                // 检查元素大小上限（下限已在可见性检查中处理）
+                if elementFrame.width < 2000 && elementFrame.height < 2000 {
                     let node = UIElement(
                         id: "", role: role, frame: elementFrame, rawElement: element)
                     list.append(node)
@@ -176,35 +175,32 @@ class UIScanner {
 
         var children: [AXUIElement] = []
 
-        // 【关键修改】优先尝试获取 "AXVisibleChildren"
-        // 这行代码会告诉 App：“只把屏幕上这 4916 个里能看见的那 10 个给我”
+        // 优先尝试获取 "AXVisibleChildren"
         if let visibleRefs: [AXUIElement] = AXHelpers.getAttribute(
             element: element, attribute: "AXVisibleChildren") as? [AXUIElement]
         {
             children = visibleRefs
-            // 调试日志：如果成功拿到了可见子节点，打印一下数量对比
-            // FileLogger.shared.log("✨ [深度 \(depth)] 成功获取可见子节点: \(children.count) 个 (原本可能有几千个)")
         }
         // 如果 App 不支持 (比如原生 Finder)，再降级获取所有
-        else if let allRefs = AXHelpers.getAttribute(
+        else if let allRefs: [AXUIElement] = AXHelpers.getAttribute(
             element: element, attribute: kAXChildrenAttribute as String) as? [AXUIElement]
         {
             children = allRefs
         }
 
-        var nodesToScan = children
+        var nodesToScan: [AXUIElement] = children
 
-        // 如果子节点太多 (超过 300 个)，我们假设中间的都在屏幕外，只扫两头
+        // 如果子节点太多，只扫两头
         if children.count > 400 {
             FileLogger.shared.log("⚠️ [深度 \(depth)] 触发掐头去尾优化: \(children.count) -> 200")
-            let head = children.prefix(200)
+            let head: Array<AXUIElement>.SubSequence = children.prefix(200)
             let tail: Array<AXUIElement>.SubSequence = children.suffix(200)
             nodesToScan = Array(head) + Array(tail)
         }
 
         // 遍历优化后的列表
-        for child in nodesToScan {
-            if role == "AXRow" { continue }
+        for child: AXUIElement in nodesToScan {
+            //if role == "AXRow" { continue }
             traverse(element: child, list: &list, visibleRect: currentVisibleRect, depth: depth + 1)
         }
     }
@@ -214,17 +210,21 @@ class UIScanner {
         var result: [UIElement] = []
 
         for item: UIElement in elements {
+            // 计算当前item的面积（只计算一次）
+            let itemArea = item.frame.width * item.frame.height
+
             let isRedundant = result.contains { existing in
                 let intersection = existing.frame.intersection(item.frame)
                 if intersection.isNull { return false }
 
-                let itemArea = item.frame.width * item.frame.height
                 let intersectArea = intersection.width * intersection.height
                 let ratio1 = intersectArea / itemArea
 
-                // 如果两者互相覆盖都超过 80%
-                let existingArea: CGFloat = existing.frame.width * existing.frame.height
+                // 计算现有元素的面积
+                let existingArea = existing.frame.width * existing.frame.height
                 let ratio2 = intersectArea / existingArea
+
+                // 如果两者互相覆盖都超过 10%
                 if ratio1 > 0.1 && ratio2 > 0.1 {
                     return true
                 }
