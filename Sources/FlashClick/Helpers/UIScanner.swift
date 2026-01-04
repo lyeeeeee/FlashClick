@@ -143,7 +143,7 @@ class UIScanner {
                 "AXCheckBox", "AXRadioButton", "AXMenuItem",
                 "AXTabButton", "AXMenuButton", "AXPopUpButton", "AXComboBox",
             ]
-            let isTrusted = trustedRoles.contains(role)
+            let isTrusted: Bool = trustedRoles.contains(role)
 
             var isValid = false
 
@@ -152,7 +152,7 @@ class UIScanner {
             } else {
                 // 【修改点 2】对于不信任的角色 (Group, Image, StaticText)，必须查 Action
                 var actionNames: CFArray?
-                let err = AXUIElementCopyActionNames(element, &actionNames)
+                let err: AXError = AXUIElementCopyActionNames(element, &actionNames)
                 if err == .success, let names = actionNames as? [String], names.count > 0 {
                     isValid = true
                 }
@@ -176,7 +176,7 @@ class UIScanner {
 
         // 【关键修改】优先尝试获取 "AXVisibleChildren"
         // 这行代码会告诉 App：“只把屏幕上这 4916 个里能看见的那 10 个给我”
-        if let visibleRefs = AXHelpers.getAttribute(
+        if let visibleRefs: [AXUIElement] = AXHelpers.getAttribute(
             element: element, attribute: "AXVisibleChildren") as? [AXUIElement]
         {
             children = visibleRefs
@@ -193,10 +193,10 @@ class UIScanner {
         var nodesToScan = children
 
         // 如果子节点太多 (超过 300 个)，我们假设中间的都在屏幕外，只扫两头
-        if children.count > 300 {
+        if children.count > 400 {
             print("⚠️ [深度 \(depth)] 触发掐头去尾优化: \(children.count) -> 200")
-            let head = children.prefix(100)
-            let tail = children.suffix(100)
+            let head = children.prefix(200)
+            let tail: Array<AXUIElement>.SubSequence = children.suffix(200)
             nodesToScan = Array(head) + Array(tail)
         }
 
@@ -211,7 +211,7 @@ class UIScanner {
     private static func deduplicate(elements: [UIElement]) -> [UIElement] {
         var result: [UIElement] = []
 
-        for item in elements {
+        for item: UIElement in elements {
             let isRedundant = result.contains { existing in
                 let intersection = existing.frame.intersection(item.frame)
                 if intersection.isNull { return false }
@@ -220,18 +220,10 @@ class UIScanner {
                 let intersectArea = intersection.width * intersection.height
                 let ratio1 = intersectArea / itemArea
 
-                // 如果新元素 90% 以上都在旧元素里面
-                if ratio1 > 0.9 {
-                    let weakRoles = ["AXStaticText", "AXImage", "AXGroup"]
-                    if weakRoles.contains(item.role) {
-                        return true
-                    }
-                }
-
                 // 如果两者互相覆盖都超过 80%
-                let existingArea = existing.frame.width * existing.frame.height
+                let existingArea: CGFloat = existing.frame.width * existing.frame.height
                 let ratio2 = intersectArea / existingArea
-                if ratio1 > 0.8 && ratio2 > 0.8 {
+                if ratio1 > 0.1 && ratio2 > 0.1 {
                     return true
                 }
 
