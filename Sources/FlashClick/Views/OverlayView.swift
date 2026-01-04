@@ -1,47 +1,82 @@
 import Cocoa
 
 class OverlayView: NSView {
-    // 数据源
     var elements: [UIElement] = []
-
+    
     override func draw(_ dirtyRect: NSRect) {
-        guard let screenHeight = NSScreen.main?.frame.height else { return }
-
-        let labelColor = NSColor(calibratedRed: 1.0, green: 0.85, blue: 0.0, alpha: 0.7)
+        // 【核心修改】永远使用主屏幕高度做基准
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else { return }
+        
+        let labelColor = NSColor(calibratedRed: 1.0, green: 0.85, blue: 0.0, alpha: 0.85)
+        let borderColor = NSColor(calibratedWhite: 0.0, alpha: 0.2)
         let textColor = NSColor.black
         let font = NSFont.boldSystemFont(ofSize: 12)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColor]
-
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor
+        ]
+        
+        var occupiedRects: [CGRect] = []
+        
         for item in elements {
             let axY = item.frame.origin.y
             let height = item.frame.height
-            let cocoaY = screenHeight - axY - height
-
+            
+            // 【核心修改】计算全局 Cocoa 坐标
+            let globalCocoaY = primaryScreenHeight - axY - height
+            let globalPoint = CGPoint(x: item.frame.origin.x, y: globalCocoaY)
+            
+            // 【核心修改】转换为当前窗口的本地坐标 (自动处理多屏偏移)
+            let localPoint = self.window?.convertPoint(fromScreen: globalPoint) ?? globalPoint
+            
             let charWidth: CGFloat = 7
             let padding: CGFloat = 8
-
             let labelWidth: CGFloat = padding + (CGFloat(item.id.count) * charWidth)
-            let labelHeight: CGFloat = 14
+            let labelHeight: CGFloat = 16
             
-            // --- 【修改点】左上角内缩 20% ---
+            // 智能定位
+            var x: CGFloat = 0
+            var y: CGFloat = 0
             
-            // 1. 计算偏移量 (宽度的 20%，但最大不超过 12px，防止大窗口标签跑偏)
-            let offsetX = min(item.frame.width * 0.2, 12.0)
-            let offsetY = min(item.frame.height * 0.2, 12.0)
+            let isFlatItem = item.frame.height < 50 && item.frame.width > item.frame.height * 2
             
-            // 2. 计算 X: 左边缘 + 偏移
-            let x = item.frame.origin.x + offsetX
+            if isFlatItem {
+                x = localPoint.x + 4
+                y = localPoint.y + (height - labelHeight) / 2
+            } else {
+                let offsetX = min(item.frame.width * 0.2, 12.0)
+                let offsetY = min(item.frame.height * 0.2, 12.0)
+                x = localPoint.x + offsetX
+                y = (localPoint.y + height) - offsetY - labelHeight
+            }
             
-            // 3. 计算 Y: 顶边缘 - 偏移 - 标签高度
-            // (CocoaY + height = 视觉上的顶部)
-            let y = (cocoaY + height) - offsetY - labelHeight
+            var labelRect = CGRect(x: x, y: y, width: labelWidth, height: labelHeight)
             
-            let labelRect = CGRect(x: x, y: y, width: labelWidth, height: labelHeight)
-
+            // 防碰撞检测
+            let maxAttempts = 5
+            var attempt = 0
+            while attempt < maxAttempts {
+                var intersects = false
+                for occupied in occupiedRects {
+                    if labelRect.intersects(occupied.insetBy(dx: -1, dy: -1)) {
+                        intersects = true
+                        break
+                    }
+                }
+                if !intersects { break }
+                labelRect.origin.x += (labelWidth + 2)
+                attempt += 1
+            }
+            occupiedRects.append(labelRect)
+            
+            // 绘制
             let path = NSBezierPath(roundedRect: labelRect, xRadius: 3, yRadius: 3)
             labelColor.set()
             path.fill()
-
+            borderColor.setStroke()
+            path.lineWidth = 1.0
+            path.stroke()
+            
             let text = item.id as NSString
             let textSize = text.size(withAttributes: attributes)
             let textRect = CGRect(
