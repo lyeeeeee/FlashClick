@@ -47,7 +47,7 @@ class AppController {
         collectedElements = UIScanner.scanCurrentWindow()
 
         if collectedElements.isEmpty {
-            print("⚠️ 未找到元素")
+            FileLogger.shared.log("⚠️ 未找到元素")
             NSSound.beep()
             return
         }
@@ -112,6 +112,58 @@ class AppController {
         inputBuffer = ""
     }
 
+    func simulateMouseClick(at rect: CGRect, targetElement: UIElement? = nil) {
+        let centerX = rect.origin.x + rect.width / 2
+        let centerY = rect.origin.y + rect.height / 2
+        let point = CGPoint(x: centerX, y: centerY)
+
+        FileLogger.shared.log("🖱️ 准备点击: (\(Int(centerX)), \(Int(centerY)))")
+
+        // 1. 【关键步骤】尝试先激活目标 App
+        // 如果我们知道目标元素属于哪个 App，就先激活它
+        if let rawElement = targetElement?.rawElement {
+            var pid: pid_t = 0
+            AXUIElementGetPid(rawElement, &pid)
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                // 强制激活 App，确保它能接收鼠标事件
+                app.activate(options: [.activateIgnoringOtherApps])
+            }
+        }
+
+        // 2. 稍微延时，等待 App 激活完成 (Arc/Chrome 需要这点时间)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+
+            // 创建事件源 (有时候 nil 会被拦截，用 HIDSystemState 更好)
+            let source = CGEventSource(stateID: .hidSystemState)
+
+            guard
+                let eventDown = CGEvent(
+                    mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point,
+                    mouseButton: .left),
+                let eventUp = CGEvent(
+                    mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point,
+                    mouseButton: .left)
+            else {
+                return
+            }
+
+            // 3. 发送点击
+            eventDown.post(tap: .cghidEventTap)
+            usleep(10000)  // 10ms
+            eventUp.post(tap: .cghidEventTap)
+
+            // 4. 【针对 Arc 的补丁】双击策略
+            // 有些 Chromium 窗口在后台时，第一下点击只是“聚焦”，第二下才是“点击”
+            // 如果你发现还是点不中，可以尝试把下面这段注释打开：
+            /*
+            usleep(50000) // 等 50ms
+            eventDown.post(tap: .cghidEventTap)
+            usleep(10000)
+            eventUp.post(tap: .cghidEventTap)
+            */
+        }
+    }
+
     func handleInput(_ char: String) {
         inputBuffer += char.uppercased()
 
@@ -132,6 +184,8 @@ class AppController {
                 eventUp?.post(tap: .cghidEventTap)
             }
             hideWindow()
+            simulateMouseClick(at: match.frame, targetElement: match)
+
         } else {
             let hasPotential = collectedElements.contains { $0.id.hasPrefix(inputBuffer) }
             if !hasPotential {

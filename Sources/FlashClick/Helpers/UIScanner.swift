@@ -52,7 +52,7 @@ class UIScanner {
             traverse(element: window, list: &elements, visibleRect: windowRect, depth: 0)
             let t2 = CFAbsoluteTimeGetCurrent()
 
-            print(
+            FileLogger.shared.log(
                 String(
                     format: "[⏱️ 遍历耗时] %.4fs (访问节点: %d, 最大深度: %d, 初步收集: %d)", t2 - t1, visitedCount,
                     maxDepthReached, elements.count))
@@ -63,7 +63,8 @@ class UIScanner {
         let deduplicated = deduplicate(elements: elements)
         let t4 = CFAbsoluteTimeGetCurrent()
 
-        print(String(format: "[⏱️ 去重耗时] %.4fs (剩余: %d)", t4 - t3, deduplicated.count))
+        FileLogger.shared.log(
+            String(format: "[⏱️ 去重耗时] %.4fs (剩余: %d)", t4 - t3, deduplicated.count))
 
         // --- 阶段 3: 可见性检测 (PID Check) ---
         let t5 = CFAbsoluteTimeGetCurrent()
@@ -71,8 +72,9 @@ class UIScanner {
             elements: deduplicated, appPID: frontApp.processIdentifier)
         let t6 = CFAbsoluteTimeGetCurrent()
 
-        print(String(format: "[⏱️ PID校验] %.4fs (最终剩余: %d)", t6 - t5, finalElements.count))
-        print(String(format: "[🔥 总耗时] %.4fs", t6 - startTime))
+        FileLogger.shared.log(
+            String(format: "[⏱️ PID校验] %.4fs (最终剩余: %d)", t6 - t5, finalElements.count))
+        FileLogger.shared.log(String(format: "[🔥 总耗时] %.4fs", t6 - startTime))
 
         return finalElements
     }
@@ -181,7 +183,7 @@ class UIScanner {
         {
             children = visibleRefs
             // 调试日志：如果成功拿到了可见子节点，打印一下数量对比
-            // print("✨ [深度 \(depth)] 成功获取可见子节点: \(children.count) 个 (原本可能有几千个)")
+            // FileLogger.shared.log("✨ [深度 \(depth)] 成功获取可见子节点: \(children.count) 个 (原本可能有几千个)")
         }
         // 如果 App 不支持 (比如原生 Finder)，再降级获取所有
         else if let allRefs = AXHelpers.getAttribute(
@@ -194,7 +196,7 @@ class UIScanner {
 
         // 如果子节点太多 (超过 300 个)，我们假设中间的都在屏幕外，只扫两头
         if children.count > 400 {
-            print("⚠️ [深度 \(depth)] 触发掐头去尾优化: \(children.count) -> 200")
+            FileLogger.shared.log("⚠️ [深度 \(depth)] 触发掐头去尾优化: \(children.count) -> 200")
             let head = children.prefix(200)
             let tail: Array<AXUIElement>.SubSequence = children.suffix(200)
             nodesToScan = Array(head) + Array(tail)
