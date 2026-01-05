@@ -8,6 +8,10 @@ class OverlayWindow: NSWindow {
             AppController.shared.hideWindow()
             return
         }
+        if event.keyCode == 48 { // Tab
+            AppController.shared.toggleContinuousMode()
+            return
+        }
         if let chars = event.characters, !chars.isEmpty {
             AppController.shared.handleInput(chars)
         }

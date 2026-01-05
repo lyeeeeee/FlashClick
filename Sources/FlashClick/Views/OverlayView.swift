@@ -87,5 +87,24 @@ class OverlayView: NSView {
             )
             text.draw(in: textRect, withAttributes: attributes)
         }
+        
+        // Draw Continuous Mode Indicator
+        if AppController.shared.isContinuousMode {
+            let statusText = "Continuous Mode (Tab to toggle)" as NSString
+            let statusAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 14),
+                .foregroundColor: NSColor.white,
+                .backgroundColor: NSColor.black.withAlphaComponent(0.6)
+            ]
+            let size = statusText.size(withAttributes: statusAttributes)
+            // Draw at bottom right
+            let rect = CGRect(
+                x: self.bounds.width - size.width - 20, 
+                y: 20, 
+                width: size.width, 
+                height: size.height
+            )
+            statusText.draw(in: rect, withAttributes: statusAttributes)
+        }
     }
 }

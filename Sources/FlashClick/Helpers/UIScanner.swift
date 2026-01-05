@@ -17,20 +17,35 @@ class UIScanner {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return [] }
         let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
 
-        // 优先获取焦点窗口
-        var targetWindow: AXUIElement?
-        if let focused = AXHelpers.getAttribute(
+        // 【修改】获取所有窗口，而不仅仅是焦点窗口
+        var targetWindows: [AXUIElement] = []
+        if let windows = AXHelpers.getAttribute(
+            element: appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]
+        {
+            targetWindows = windows
+        } else if let focused = AXHelpers.getAttribute(
             element: appElement, attribute: kAXFocusedWindowAttribute as String)
         {
-            targetWindow = (focused as! AXUIElement)
-        } else if let windows = AXHelpers.getAttribute(
-            element: appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement],
-            let first = windows.first
-        {
-            targetWindow = first
+            targetWindows = [focused as! AXUIElement]
         }
 
-        if let window = targetWindow {
+        // 如果没有找到窗口，直接返回
+        if targetWindows.isEmpty { return [] }
+
+        // 获取主屏幕范围 (用于过滤屏幕外的窗口)
+        let screenFrame = NSScreen.main?.frame ?? CGRect.zero
+
+        // --- 阶段 1: 遍历所有可见窗口 ---
+        let t1: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+
+        for window in targetWindows {
+            // 检查是否最小化
+            if let minimized = AXHelpers.getAttribute(
+                element: window, attribute: kAXMinimizedAttribute as String) as? Bool, minimized
+            {
+                continue
+            }
+
             // 获取窗口范围 (用于裁剪)
             var windowRect: CGRect = .zero
 
@@ -52,16 +67,20 @@ class UIScanner {
                 windowRect.size = winSize
             }
 
-            // --- 阶段 1: 遍历 (Traversal) ---
-            let t1: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-            traverse(element: window, list: &elements, visibleRect: windowRect, depth: 0)
-            let t2 = CFAbsoluteTimeGetCurrent()
+            // 过滤无效或不可见窗口
+            if windowRect.width < 10 || windowRect.height < 10 { continue }
+            // 简单的屏幕相交测试 (可选)
+            // if !windowRect.intersects(screenFrame) { continue }
 
-            FileLogger.shared.log(
-                String(
-                    format: "[⏱️ 遍历耗时] %.4fs (访问节点: %d, 最大深度: %d, 初步收集: %d)", t2 - t1, visitedCount,
-                    maxDepthReached, elements.count))
+            traverse(element: window, list: &elements, visibleRect: windowRect, depth: 0)
         }
+
+        let t2 = CFAbsoluteTimeGetCurrent()
+
+        FileLogger.shared.log(
+            String(
+                format: "[⏱️ 遍历耗时] %.4fs (窗口数: %d, 访问节点: %d, 最大深度: %d, 初步收集: %d)",
+                t2 - t1, targetWindows.count, visitedCount, maxDepthReached, elements.count))
 
         // --- 阶段 2: 空间去重 (Deduplication) ---
         let t3: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()

@@ -11,6 +11,10 @@ class AppController {
     var globalMouseMonitor: Any?
     var localMouseMonitor: Any?
 
+    var isContinuousMode = false
+    var pendingRestartWorkItem: DispatchWorkItem?
+    var ignoreNextClickEvent = false
+
     init() {
         setupObservers()
     }
@@ -26,18 +30,21 @@ class AppController {
             else { return }
 
             if app.processIdentifier == getpid() { return }
+            if self?.ignoreNextClickEvent == true { return }
             self?.hideWindow()
         }
 
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [
             .leftMouseDown, .rightMouseDown,
         ]) { [weak self] _ in
+            if self?.ignoreNextClickEvent == true { return }
             self?.hideWindow()
         }
 
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [
             .leftMouseDown, .rightMouseDown,
         ]) { [weak self] event in
+            if self?.ignoreNextClickEvent == true { return event }
             self?.hideWindow()
             return event
         }
@@ -107,15 +114,35 @@ class AppController {
     }
 
     func hideWindow() {
+        pendingRestartWorkItem?.cancel()
+        pendingRestartWorkItem = nil
+
+        suspendWindow()
+    }
+
+    func suspendWindow() {
         window?.orderOut(nil)
         NSApplication.shared.hide(nil)
         inputBuffer = ""
+    }
+
+    func toggleContinuousMode() {
+        isContinuousMode.toggle()
+        FileLogger.shared.log("🔄 连续模式: \(isContinuousMode ? "开启" : "关闭")")
+        window?.contentView?.needsDisplay = true
     }
 
     func simulateMouseClick(at rect: CGRect, targetElement: UIElement? = nil) {
         let centerX = rect.origin.x + rect.width / 2
         let centerY = rect.origin.y + rect.height / 2
         let point = CGPoint(x: centerX, y: centerY)
+
+        // Prevent monitors from cancelling the loop during simulated interaction
+        ignoreNextClickEvent = true
+        // Safety reset in case async blocks fail or timing is off
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.ignoreNextClickEvent = false
+        }
 
         FileLogger.shared.log("🖱️ 准备点击: (\(Int(centerX)), \(Int(centerY)))")
 
@@ -137,7 +164,7 @@ class AppController {
             let source = CGEventSource(stateID: .hidSystemState)
 
             guard
-                let eventDown = CGEvent(
+                let eventDown: CGEvent = CGEvent(
                     mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point,
                     mouseButton: .left),
                 let eventUp = CGEvent(
@@ -149,7 +176,7 @@ class AppController {
 
             // 3. 发送点击
             eventDown.post(tap: .cghidEventTap)
-            usleep(10000)  // 10ms
+            usleep(1000)  // 10ms
             eventUp.post(tap: .cghidEventTap)
 
             // 4. 【针对 Arc 的补丁】双击策略
@@ -183,8 +210,16 @@ class AppController {
                 usleep(10000)
                 eventUp?.post(tap: .cghidEventTap)
             }
-            hideWindow()
+            suspendWindow()  // Just hide UI, don't cancel pending restart
             simulateMouseClick(at: match.frame, targetElement: match)
+
+            if isContinuousMode {
+                let item = DispatchWorkItem { [weak self] in
+                    self?.start()
+                }
+                pendingRestartWorkItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+            }
 
         } else {
             let hasPotential = collectedElements.contains { $0.id.hasPrefix(inputBuffer) }
