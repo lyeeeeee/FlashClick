@@ -222,12 +222,167 @@ class AppController {
             }
 
         } else {
-            let hasPotential = collectedElements.contains { $0.id.hasPrefix(inputBuffer) }
+            let hasPotential: Bool = collectedElements.contains { $0.id.hasPrefix(inputBuffer) }
             if !hasPotential {
                 inputBuffer = ""
                 NSSound.beep()
             }
         }
         window?.contentView?.needsDisplay = true
+    }
+
+    enum ScrollDirection {
+        case up
+        case down
+    }
+
+    // Scroll state
+    private var lastScrollCommandTime: Date = Date.distantPast
+    private var cachedScrollLocation: CGPoint?
+    private var scrollVelocityY: Double = 0.0
+    private var scrollTimer: Timer?
+    private var activeScrollKeyCode: CGKeyCode? // Store which key triggered the scroll
+    
+    // Physics parameters
+    private let holdingFriction: Double = 0.98  // Low friction while holding
+    private let releaseFriction: Double = 0.90  // Higher friction when released
+    private let velocityImpulse: Double = 8.0   // Speed added per key press
+    private let maxVelocity: Double = 50.0      // Max pixels per frame (approx 3000px/s)
+
+    func scroll(direction: ScrollDirection, keyCode: CGKeyCode? = nil) {
+        let now = Date()
+        
+        // Update cache if command gap is large (new scroll session)
+        // or if we haven't updated in a while (to handle window movement)
+        if now.timeIntervalSince(lastScrollCommandTime) > 0.5 {
+            cachedScrollLocation = getScrollTargetLocation()
+        }
+        lastScrollCommandTime = now
+        activeScrollKeyCode = keyCode // Store the key code
+        
+        // If changing direction, reset velocity immediately for responsiveness
+        if (direction == .up && scrollVelocityY < 0) || (direction == .down && scrollVelocityY > 0) {
+            scrollVelocityY = 0
+        }
+        
+        // Apply impulse
+        let impulse = direction == .up ? velocityImpulse : -velocityImpulse
+        scrollVelocityY += impulse
+        
+        // Clamp velocity
+        if scrollVelocityY > maxVelocity { scrollVelocityY = maxVelocity }
+        if scrollVelocityY < -maxVelocity { scrollVelocityY = -maxVelocity }
+        
+        // Start animation timer if not running
+        if scrollTimer == nil {
+            scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
+                self?.handleScrollTick()
+            }
+        }
+    }
+    
+    private func handleScrollTick() {
+        // Check if user is still holding the key
+        var isHolding = false
+        
+        if let keyCode = activeScrollKeyCode {
+            // Check specific key state (requires permission but we have it for accessibility)
+            isHolding = CGEventSource.keyState(.combinedSessionState, key: keyCode)
+        } else {
+            // Fallback: Check if recent command received (for non-key sources or missing keycode)
+            let timeSinceLastCommand = Date().timeIntervalSince(lastScrollCommandTime)
+            isHolding = timeSinceLastCommand < 0.15
+        }
+        
+        // Apply different friction based on state
+        let currentFriction = isHolding ? holdingFriction : releaseFriction
+        
+        // Apply friction FIRST to avoid infinite speed accumulation during holding
+        scrollVelocityY *= currentFriction
+        
+        // If holding, add a small continuous force to maintain speed against friction
+        // This simulates "pushing" the wheel constantly
+        if isHolding {
+            // Add a small force in the direction of velocity
+            let force = (scrollVelocityY > 0 ? 1.0 : -1.0) * (velocityImpulse * 0.1)
+            scrollVelocityY += force
+            
+            // Re-clamp
+            if scrollVelocityY > maxVelocity { scrollVelocityY = maxVelocity }
+            if scrollVelocityY < -maxVelocity { scrollVelocityY = -maxVelocity }
+        }
+        
+        // Apply natural scrolling logic
+        let isNatural = isNaturalScrollingEnabled()
+        let finalDelta = Int32(isNatural ? -scrollVelocityY : scrollVelocityY)
+        
+        // Send event
+        if abs(finalDelta) > 0,
+           let source = CGEventSource(stateID: .hidSystemState),
+           let scrollEvent = CGEvent(
+            scrollWheelEvent2Source: source,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: finalDelta,
+            wheel2: 0,
+            wheel3: 0
+           ) {
+            
+            if let location = cachedScrollLocation {
+                scrollEvent.location = location
+            } else if let currentEvent = CGEvent(source: nil) {
+                scrollEvent.location = currentEvent.location
+            }
+            
+            scrollEvent.post(tap: .cghidEventTap)
+        }
+        
+        // Stop condition:
+        // Only stop if NOT holding AND velocity is very low
+        if !isHolding && abs(scrollVelocityY) < 0.5 {
+            scrollTimer?.invalidate()
+            scrollTimer = nil
+            scrollVelocityY = 0
+            activeScrollKeyCode = nil
+        }
+    }
+
+    private func getScrollTargetLocation() -> CGPoint? {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
+
+        // Try to get focused window
+        if let focusedWindow = AXHelpers.getAttribute(
+            element: appElement, attribute: kAXFocusedWindowAttribute as String)
+        {
+            let window = focusedWindow as! AXUIElement
+            // Get position and size to calculate center
+            if let posVal = AXHelpers.getAttribute(
+                element: window, attribute: kAXPositionAttribute as String),
+                let sizeVal = AXHelpers.getAttribute(
+                    element: window, attribute: kAXSizeAttribute as String)
+            {
+
+                var pos = CGPoint.zero
+                var size = CGSize.zero
+                AXValueGetValue(posVal as! AXValue, .cgPoint, &pos)
+                AXValueGetValue(sizeVal as! AXValue, .cgSize, &size)
+
+                return CGPoint(x: pos.x + size.width / 2, y: pos.y + size.height / 2)
+            }
+        }
+
+        return nil
+    }
+
+    private func isNaturalScrollingEnabled() -> Bool {
+        let key = "com.apple.swipescrolldirection" as CFString
+        // kCFPreferencesAnyApplication is not directly available in Swift easily without import,
+        // but we can use CFPreferencesCopyAppValue with specific domain
+        // However, "NSGlobalDomain" works via UserDefaults too usually, but CFPreferences is safer for global settings
+        if let value = CFPreferencesCopyAppValue(key, "NSGlobalDomain" as CFString) {
+            return (value as? Bool) ?? true
+        }
+        return true  // Default to true on modern macOS
     }
 }

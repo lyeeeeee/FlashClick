@@ -32,17 +32,34 @@ app.setActivationPolicy(.accessory)
 
 // 2. 注册热键
 // 注意：这里需要保持 hotkey 变量的生命周期，不能让它释放
-let hotkey: GlobalHotKey = GlobalHotKey {
-    if let frontApp: NSRunningApplication = NSWorkspace.shared.frontmostApplication {
-        FileLogger.shared.log(
-            "🔥 热键触发！当前目标 App: \(frontApp.localizedName ?? "Unknown") (PID: \(frontApp.processIdentifier))"
-        )
-    }
-    AppController.shared.start()
-}
+var hotkeys: [GlobalHotKey] = []
+
+// Cmd + Shift + Space: 激活
+hotkeys.append(
+    GlobalHotKey(keyCode: 49) {
+        if let frontApp: NSRunningApplication = NSWorkspace.shared.frontmostApplication {
+            FileLogger.shared.log(
+                "🔥 热键触发！当前目标 App: \(frontApp.localizedName ?? "Unknown") (PID: \(frontApp.processIdentifier))"
+            )
+        }
+        AppController.shared.start()
+    })
+
+// Cmd + Shift + J: 向下滚动
+hotkeys.append(
+    GlobalHotKey(keyCode: 38) {
+        AppController.shared.scroll(direction: .down, keyCode: 38)
+    })
+
+// Cmd + Shift + K: 向上滚动
+hotkeys.append(
+    GlobalHotKey(keyCode: 40) {
+        AppController.shared.scroll(direction: .up, keyCode: 40)
+    })
 
 FileLogger.shared.log("👻 FlashClick 已启动 (后台模式)")
 FileLogger.shared.log("⌨️ 请按 Cmd + Shift + Space 激活")
+FileLogger.shared.log("⌨️ Cmd + Shift + J/K 滚动")
 
 // 3. 启动
 app.run()
