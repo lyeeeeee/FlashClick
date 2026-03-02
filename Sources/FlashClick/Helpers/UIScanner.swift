@@ -8,7 +8,7 @@ class UIScanner {
     static var maxDepthReached = 0  // 【新增】记录最大深度
 
     // 扫描入口
-    static func scanCurrentWindow() -> [UIElement] {
+    static func scanCurrentWindow(screen: NSScreen? = nil) -> [UIElement] {
         let startTime = CFAbsoluteTimeGetCurrent()
         visitedCount = 0
 
@@ -32,8 +32,20 @@ class UIScanner {
         // 如果没有找到窗口，直接返回
         if targetWindows.isEmpty { return [] }
 
-        // 获取主屏幕范围 (用于过滤屏幕外的窗口)
-        let screenFrame = NSScreen.main?.frame ?? CGRect.zero
+        // 获取目标屏幕范围 (用于过滤屏幕外的窗口)
+        // 注意：NSScreen.frame 是 Cocoa 坐标系（原点左下角），而 AXAPI 是 Quartz 坐标系（原点左上角）
+        // 我们需要把 targetScreenFrame 转换到 Quartz 坐标系才能正确过滤
+        var targetScreenFrameQuartz = CGRect.zero
+        
+        if let screen = screen ?? NSScreen.main {
+            targetScreenFrameQuartz = screen.frame
+            // 转换 Y 轴：QuartzY = ScreenHeight - (CocoaY + Height)
+            // 注意：这里需要相对于主屏幕的高度来翻转。
+            // 简单的做法是利用 NSScreen.screens[0] 的高度
+            if let mainScreenHeight = NSScreen.screens.first?.frame.height {
+                targetScreenFrameQuartz.origin.y = mainScreenHeight - (screen.frame.origin.y + screen.frame.height)
+            }
+        }
 
         // --- 阶段 1: 遍历所有可见窗口 ---
         let t1: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
@@ -69,10 +81,21 @@ class UIScanner {
 
             // 过滤无效或不可见窗口
             if windowRect.width < 10 || windowRect.height < 10 { continue }
-            // 简单的屏幕相交测试 (可选)
-            // if !windowRect.intersects(screenFrame) { continue }
+            
+            // 屏幕过滤：如果窗口和目标屏幕没有交集，直接跳过
+            if targetScreenFrameQuartz != .zero && !windowRect.intersects(targetScreenFrameQuartz) {
+                continue
+            }
+            
+            // 传递 visibleRect 给 traverse，用于裁剪元素
+            var clipRect = windowRect
+            if targetScreenFrameQuartz != .zero {
+                clipRect = windowRect.intersection(targetScreenFrameQuartz)
+            }
+            
+            if clipRect.isNull || clipRect.width < 10 || clipRect.height < 10 { continue }
 
-            traverse(element: window, list: &elements, visibleRect: windowRect, depth: 0)
+            traverse(element: window, list: &elements, visibleRect: clipRect, depth: 0)
         }
 
         let t2 = CFAbsoluteTimeGetCurrent()

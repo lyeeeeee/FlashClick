@@ -51,7 +51,13 @@ class AppController {
     }
 
     func start() {
-        collectedElements = UIScanner.scanCurrentWindow()
+        // 1. 获取鼠标当前所在的屏幕
+        let mouseLoc = NSEvent.mouseLocation
+        let currentScreen = NSScreen.screens.first { NSMouseInRect(mouseLoc, $0.frame, false) } ?? NSScreen.main
+        let screenFrame = currentScreen?.frame ?? CGRect.zero
+        
+        // 2. 扫描该屏幕上的元素
+        collectedElements = UIScanner.scanCurrentWindow(screen: currentScreen)
 
         if collectedElements.isEmpty {
             FileLogger.shared.log("⚠️ 未找到元素")
@@ -59,14 +65,12 @@ class AppController {
             return
         }
 
-        // 排序
-        if let screenFrame = NSScreen.main?.frame {
-            let center = CGPoint(x: screenFrame.midX, y: screenFrame.midY)
-            collectedElements.sort { (node1, node2) -> Bool in
-                let dist1 = hypot(node1.frame.midX - center.x, node1.frame.midY - center.y)
-                let dist2 = hypot(node2.frame.midX - center.x, node2.frame.midY - center.y)
-                return dist1 < dist2
-            }
+        // 3. 排序：以鼠标位置为中心
+        let center = mouseLoc
+        collectedElements.sort { (node1, node2) -> Bool in
+            let dist1 = hypot(node1.frame.midX - center.x, node1.frame.midY - center.y)
+            let dist2 = hypot(node2.frame.midX - center.x, node2.frame.midY - center.y)
+            return dist1 < dist2
         }
 
         // 分配标签
@@ -74,19 +78,16 @@ class AppController {
             collectedElements[i].id = AXHelpers.generateLabel(index: i)
         }
 
-        // 显示窗口 (传入第一个元素的位置，用于定位屏幕)
-        if let firstElement = collectedElements.first {
-            showWindow(at: firstElement.frame)
-        }
+        // 4. 显示窗口 (强制显示在当前屏幕)
+        showWindow(at: screenFrame)
     }
 
-    // 【修改点】增加 targetFrame 参数，用于定位屏幕
     func showWindow(at targetFrame: CGRect) {
         // 1. 找到包含目标元素的屏幕
-        // 如果找不到，就默认用主屏幕
         let targetScreen =
             NSScreen.screens.first { screen in
-                NSIntersectionRect(screen.frame, targetFrame) != .zero
+                let intersection = NSIntersectionRect(screen.frame, targetFrame)
+                return intersection.width * intersection.height > 0
             } ?? NSScreen.main ?? NSScreen.screens[0]
 
         let screenRect = targetScreen.frame
@@ -241,50 +242,52 @@ class AppController {
     private var cachedScrollLocation: CGPoint?
     private var scrollVelocityY: Double = 0.0
     private var scrollTimer: Timer?
-    private var activeScrollKeyCode: CGKeyCode? // Store which key triggered the scroll
-    
+    private var activeScrollKeyCode: CGKeyCode?  // Store which key triggered the scroll
+
     // Physics parameters
     private let holdingFriction: Double = 0.98  // Low friction while holding
-    private let releaseFriction: Double = 0.90  // Higher friction when released
-    private let velocityImpulse: Double = 8.0   // Speed added per key press
-    private let maxVelocity: Double = 50.0      // Max pixels per frame (approx 3000px/s)
+    private let releaseFriction: Double = 0.85  // Higher friction when released (stopped faster)
+    private let velocityImpulse: Double = 5.0  // Lower initial impulse for smoother tap
+    private let maxVelocity: Double = 30.0  // Cap max speed to avoid dizziness
 
     func scroll(direction: ScrollDirection, keyCode: CGKeyCode? = nil) {
         let now = Date()
-        
+
         // Update cache if command gap is large (new scroll session)
         // or if we haven't updated in a while (to handle window movement)
         if now.timeIntervalSince(lastScrollCommandTime) > 0.5 {
             cachedScrollLocation = getScrollTargetLocation()
         }
         lastScrollCommandTime = now
-        activeScrollKeyCode = keyCode // Store the key code
-        
+        activeScrollKeyCode = keyCode  // Store the key code
+
         // If changing direction, reset velocity immediately for responsiveness
-        if (direction == .up && scrollVelocityY < 0) || (direction == .down && scrollVelocityY > 0) {
+        if (direction == .up && scrollVelocityY < 0) || (direction == .down && scrollVelocityY > 0)
+        {
             scrollVelocityY = 0
         }
-        
+
         // Apply impulse
         let impulse = direction == .up ? velocityImpulse : -velocityImpulse
         scrollVelocityY += impulse
-        
+
         // Clamp velocity
         if scrollVelocityY > maxVelocity { scrollVelocityY = maxVelocity }
         if scrollVelocityY < -maxVelocity { scrollVelocityY = -maxVelocity }
-        
+
         // Start animation timer if not running
         if scrollTimer == nil {
-            scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] _ in
+            scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) {
+                [weak self] _ in
                 self?.handleScrollTick()
             }
         }
     }
-    
+
     private func handleScrollTick() {
         // Check if user is still holding the key
         var isHolding = false
-        
+
         if let keyCode = activeScrollKeyCode {
             // Check specific key state (requires permission but we have it for accessibility)
             isHolding = CGEventSource.keyState(.combinedSessionState, key: keyCode)
@@ -293,53 +296,54 @@ class AppController {
             let timeSinceLastCommand = Date().timeIntervalSince(lastScrollCommandTime)
             isHolding = timeSinceLastCommand < 0.15
         }
-        
+
         // Apply different friction based on state
         let currentFriction = isHolding ? holdingFriction : releaseFriction
-        
+
         // Apply friction FIRST to avoid infinite speed accumulation during holding
         scrollVelocityY *= currentFriction
-        
+
         // If holding, add a small continuous force to maintain speed against friction
         // This simulates "pushing" the wheel constantly
         if isHolding {
             // Add a small force in the direction of velocity
             let force = (scrollVelocityY > 0 ? 1.0 : -1.0) * (velocityImpulse * 0.1)
             scrollVelocityY += force
-            
+
             // Re-clamp
             if scrollVelocityY > maxVelocity { scrollVelocityY = maxVelocity }
             if scrollVelocityY < -maxVelocity { scrollVelocityY = -maxVelocity }
         }
-        
+
         // Apply natural scrolling logic
         let isNatural = isNaturalScrollingEnabled()
         let finalDelta = Int32(isNatural ? -scrollVelocityY : scrollVelocityY)
-        
+
         // Send event
         if abs(finalDelta) > 0,
-           let source = CGEventSource(stateID: .hidSystemState),
-           let scrollEvent = CGEvent(
-            scrollWheelEvent2Source: source,
-            units: .pixel,
-            wheelCount: 1,
-            wheel1: finalDelta,
-            wheel2: 0,
-            wheel3: 0
-           ) {
-            
+            let source = CGEventSource(stateID: .hidSystemState),
+            let scrollEvent = CGEvent(
+                scrollWheelEvent2Source: source,
+                units: .pixel,
+                wheelCount: 1,
+                wheel1: finalDelta,
+                wheel2: 0,
+                wheel3: 0
+            )
+        {
+
             if let location = cachedScrollLocation {
                 scrollEvent.location = location
             } else if let currentEvent = CGEvent(source: nil) {
                 scrollEvent.location = currentEvent.location
             }
-            
+
             scrollEvent.post(tap: .cghidEventTap)
         }
-        
+
         // Stop condition:
         // Only stop if NOT holding AND velocity is very low
-        if !isHolding && abs(scrollVelocityY) < 0.5 {
+        if !isHolding && abs(scrollVelocityY) < 1.0 {  // Increased threshold to stop sooner
             scrollTimer?.invalidate()
             scrollTimer = nil
             scrollVelocityY = 0
